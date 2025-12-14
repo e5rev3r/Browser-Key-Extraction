@@ -46,6 +46,11 @@ from nss_decrypt import (
     check_master_password_required,
     DecryptedLogin,
     MasterPasswordRequired,
+    UnsupportedEnvironment,
+    NSSLibraryMissing,
+    OSKeyringLocked,
+    run_environment_check,
+    validate_environment,
 )
 
 
@@ -575,40 +580,60 @@ def extract_profile(
     
     decrypted_passwords = []
     
-    # First try without master password
-    passwords, error = decrypt_firefox_passwords(profile_path, "")
-    
-    if error and "master password" in error.lower():
-        # Master password is required
-        if interactive:
-            master_password = prompt_master_password()
-            if master_password:
-                passwords, error = decrypt_firefox_passwords(profile_path, master_password)
-            else:
-                print(f"  {colorize('⚠ Skipping password decryption (no master password provided)', Colors.YELLOW)}")
-                error = None  # User chose to skip
-        else:
-            print(f"  {colorize('⚠ Master password required but running non-interactively', Colors.YELLOW)}")
-    
-    if error:
-        print(f"  {colorize(f'⚠ Password decryption failed: {error}', Colors.YELLOW)}")
-    elif passwords:
-        decrypted_passwords = passwords
-        print_decrypted_passwords(passwords)
+    # Check environment before attempting decryption
+    try:
+        validate_environment(profile_path)
+    except UnsupportedEnvironment as e:
+        print(f"  {colorize('❌ UNSUPPORTED ENVIRONMENT', Colors.RED)}")
+        print(f"  {colorize(str(e), Colors.YELLOW)}")
+        error = str(e)
+        passwords = []
+    except NSSLibraryMissing as e:
+        print(f"  {colorize('❌ MISSING LIBRARY', Colors.RED)}")
+        print(f"  {colorize(str(e), Colors.YELLOW)}")
+        error = str(e)
+        passwords = []
+    except OSKeyringLocked as e:
+        print(f"  {colorize('❌ OS KEYRING LOCKED', Colors.RED)}")
+        print(f"  {colorize(str(e), Colors.YELLOW)}")
+        error = str(e)
+        passwords = []
+    else:
+        # Environment OK - proceed with decryption
+        # First try without master password
+        passwords, error = decrypt_firefox_passwords(profile_path, "")
         
-        # Add decrypted passwords to credentials list
-        for pwd in passwords:
-            credentials.append({
-                'type': 'Saved Password',
-                'source': 'logins.json (decrypted)',
-                'field': 'password',
-                'value': pwd.password,
-                'extra': {
-                    'URL': pwd.hostname,
-                    'Username': pwd.username,
-                    'Times Used': pwd.times_used or 0,
-                }
-            })
+        if error and "master password" in error.lower():
+            # Master password is required
+            if interactive:
+                master_password = prompt_master_password()
+                if master_password:
+                    passwords, error = decrypt_firefox_passwords(profile_path, master_password)
+                else:
+                    print(f"  {colorize('⚠ Skipping password decryption (no master password provided)', Colors.YELLOW)}")
+                    error = None  # User chose to skip
+            else:
+                print(f"  {colorize('⚠ Master password required but running non-interactively', Colors.YELLOW)}")
+        
+        if error:
+            print(f"  {colorize(f'⚠ Password decryption failed: {error}', Colors.YELLOW)}")
+        elif passwords:
+            decrypted_passwords = passwords
+            print_decrypted_passwords(passwords)
+            
+            # Add decrypted passwords to credentials list
+            for pwd in passwords:
+                credentials.append({
+                    'type': 'Saved Password',
+                    'source': 'logins.json (decrypted)',
+                    'field': 'password',
+                    'value': pwd.password,
+                    'extra': {
+                        'URL': pwd.hostname,
+                        'Username': pwd.username,
+                        'Times Used': pwd.times_used or 0,
+                    }
+                })
 
     # Calculate summary stats (use values from extract_databases)
     summary = {
@@ -748,11 +773,24 @@ def main():
         help="List all available forensic queries and exit",
     )
 
+    parser.add_argument(
+        "--check-env",
+        action="store_true",
+        help="Check environment compatibility for password decryption and exit",
+    )
+
     args = parser.parse_args()
 
     # Setup logging
     log_level = logging.DEBUG if args.verbose else logging.WARNING if args.quiet else logging.INFO
     logger = setup_logging(log_level)
+
+    # Handle --check-env
+    if args.check_env:
+        print_banner()
+        profile = Path(args.profile) if args.profile else None
+        ok = run_environment_check(profile)
+        return 0 if ok else 1
 
     # Handle --list-queries
     if args.list_queries:

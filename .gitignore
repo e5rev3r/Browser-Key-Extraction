@@ -52,3 +52,15 @@ test_output/
 
 # OS
 Thumbs.db
+
+# Environment files (keep .env.example)
+.env
+.env.local
+.env.*.local
+
+# Don't ignore these setup files
+!setup.sh
+!install.py
+!Makefile
+!.env.example
+!pyproject.toml

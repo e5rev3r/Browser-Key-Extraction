@@ -1,7 +1,10 @@
 # Firefox Forensics Extraction Tool
-# Python 3.9+ standard library only (no external dependencies)
-
-# This tool uses only Python standard library modules:
+# Python Dependencies
+#
+# This tool primarily uses Python standard library modules.
+# No pip packages are required for basic functionality.
+#
+# Standard library modules used:
 # - sqlite3: SQLite database access
 # - json: JSON file parsing
 # - csv: CSV export
@@ -11,6 +14,54 @@
 # - datetime: Timestamp conversion
 # - dataclasses: Data structures
 # - typing: Type hints
-
-# No pip install required - all modules are built-in.
-# Zero dependencies = maximum portability and security.
+# - ctypes: NSS library bindings (for password decryption)
+# - subprocess: System commands
+# - tempfile: Temporary files
+# - shutil: File operations
+# - base64: Base64 decoding
+#
+# ============================================================================
+# SYSTEM REQUIREMENTS (not pip packages)
+# ============================================================================
+#
+# Python 3.9+ (tested on 3.9, 3.10, 3.11, 3.12, 3.13)
+#
+# libnss3 - Mozilla NSS library (for password decryption)
+#   Install with your system package manager:
+#
+#   Arch Linux / Manjaro:
+#     sudo pacman -S nss
+#
+#   Ubuntu / Debian / Linux Mint:
+#     sudo apt install libnss3
+#
+#   Fedora / RHEL / CentOS:
+#     sudo dnf install nss
+#
+#   openSUSE:
+#     sudo zypper install mozilla-nss
+#
+#   macOS (Homebrew):
+#     brew install nss
+#
+# ============================================================================
+# QUICK SETUP
+# ============================================================================
+#
+# Option 1: Use the setup script (recommended)
+#   chmod +x setup.sh && ./setup.sh
+#
+# Option 2: Use the Python installer
+#   python3 install.py
+#
+# Option 3: Use make
+#   make setup
+#
+# ============================================================================
+# NOTES
+# ============================================================================
+#
+# - No pip install required - all modules are built-in
+# - Zero Python dependencies = maximum portability and security
+# - Password decryption requires native Firefox (not Snap/Flatpak)
+#
