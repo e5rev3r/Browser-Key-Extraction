@@ -53,6 +53,11 @@ from nss_decrypt import (
     validate_environment,
 )
 
+# Import new forensic modules
+from report_builder import ForensicReportBuilder, build_forensic_report
+from report_generators import ReportOutputManager
+from forensic_models import ProcessingStatus
+
 
 # ANSI color codes for terminal output
 class Colors:
@@ -741,6 +746,213 @@ def extract_profile(
     return True
 
 
+def extract_profile_forensic(
+    profile_path: Path,
+    output_dir: Path,
+    logger: logging.Logger,
+    interactive: bool = True,
+    copy_artifacts: bool = False,
+    output_provided: bool = False,
+) -> bool:
+    """DFIR-compliant forensic extraction with full evidence integrity.
+    
+    This function generates forensic-grade reports following DFIR best practices:
+    - report.html: Human-readable forensic report
+    - report.json: Machine-readable structured data
+    - summary.txt: Executive summary
+    - artifacts/: Copied read-only browser databases (optional)
+    
+    Args:
+        profile_path: Path to Firefox profile.
+        output_dir: Output directory path.
+        logger: Logger instance.
+        interactive: Whether to prompt for user input.
+        copy_artifacts: Whether to copy source files as read-only artifacts.
+        output_provided: Whether output path was provided via command line.
+    
+    Returns:
+        True if extraction completed successfully.
+    """
+    print_banner()
+    
+    # Validate profile
+    logger.info(f"Validating profile at {profile_path}...")
+    if not validate_profile_path(profile_path):
+        logger.error(f"Invalid Firefox profile: {profile_path}")
+        return False
+    
+    # Get profile info for display
+    profile_info = get_profile_info(profile_path)
+    
+    print(f"{colorize('📁 Profile:', Colors.CYAN)} {profile_info['name']}")
+    print(f"{colorize('📍 Path:', Colors.CYAN)} {profile_path}")
+    print(f"{colorize('💾 Size:', Colors.CYAN)} {profile_info.get('total_size_formatted', 'unknown')}")
+    print(f"{colorize('📄 Files:', Colors.CYAN)} {profile_info.get('file_count', 'unknown')}")
+    print()
+    
+    # Interactive output path selection
+    if interactive and not output_provided:
+        output_dir = prompt_path(
+            "Enter output directory",
+            default=str(output_dir)
+        )
+        if output_dir is None:
+            print_goodbye()
+            return False
+    
+    # Create output directory
+    print(f"\n{colorize('Creating output directory:', Colors.CYAN)} {output_dir}")
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Initialize forensic report builder
+    print(f"\n{colorize('═' * 70, Colors.BLUE)}")
+    print(f"{colorize('🔬 Building Forensic Report', Colors.BOLD + Colors.BLUE)}")
+    print(f"{colorize('═' * 70, Colors.BLUE)}")
+    
+    execution_args = sys.argv[1:] if len(sys.argv) > 1 else []
+    
+    try:
+        builder = ForensicReportBuilder(
+            profile_path=profile_path,
+            output_dir=output_dir,
+            copy_artifacts=copy_artifacts,
+            execution_args=execution_args
+        )
+        
+        # Collect evidence files
+        print(f"  {colorize('•', Colors.CYAN)} Collecting evidence integrity data...")
+        evidence_files = builder.evidence_manager.collect_evidence_files(copy_artifacts)
+        print(f"    {colorize('✓', Colors.GREEN)} {len(evidence_files)} files catalogued")
+        
+        # Extract databases
+        print(f"  {colorize('•', Colors.CYAN)} Extracting SQLite databases...")
+        builder._extract_all_databases()
+        db_count = len([f for f in builder.findings.keys() if not f.startswith('logins')])
+        print(f"    {colorize('✓', Colors.GREEN)} {db_count} data categories extracted")
+        
+        # Extract JSON artifacts
+        print(f"  {colorize('•', Colors.CYAN)} Processing JSON artifacts...")
+        builder._extract_json_artifacts()
+        
+        # Attempt password decryption
+        print(f"\n{colorize('═' * 70, Colors.RED)}")
+        print(f"{colorize('🔓 Attempting Password Decryption', Colors.BOLD + Colors.RED)}")
+        print(f"{colorize('═' * 70, Colors.RED)}")
+        
+        decrypted_passwords = []
+        
+        try:
+            validate_environment(profile_path)
+            
+            # Try without master password first
+            passwords, error = decrypt_firefox_passwords(profile_path, "")
+            
+            if error and "master password" in error.lower():
+                if interactive:
+                    master_password = prompt_master_password()
+                    if master_password:
+                        passwords, error = decrypt_firefox_passwords(profile_path, master_password)
+                        if passwords:
+                            builder.set_decrypted_passwords(passwords, master_password_used=True)
+                            decrypted_passwords = passwords
+                            print_decrypted_passwords(passwords)
+                    else:
+                        print(f"  {colorize('⚠ Skipping password decryption', Colors.YELLOW)}")
+                        builder.decryption_context.master_password_status = "set"
+                        builder.decryption_context.decryption_status = ProcessingStatus.PARTIAL
+                        builder.decryption_context.failure_reason = "Master password required but not provided"
+                else:
+                    print(f"  {colorize('⚠ Master password required but running non-interactively', Colors.YELLOW)}")
+                    builder.decryption_context.master_password_status = "set"
+                    builder.decryption_context.decryption_status = ProcessingStatus.PARTIAL
+            elif error:
+                print(f"  {colorize(f'⚠ Decryption failed: {error}', Colors.YELLOW)}")
+                builder.decryption_context.decryption_status = ProcessingStatus.FAILED
+                builder.decryption_context.failure_reason = error
+            elif passwords:
+                builder.set_decrypted_passwords(passwords)
+                decrypted_passwords = passwords
+                print_decrypted_passwords(passwords)
+            else:
+                print(f"  {colorize('ℹ No saved passwords found', Colors.YELLOW)}")
+                builder.decryption_context.decryption_status = ProcessingStatus.SUCCESS
+                
+        except UnsupportedEnvironment as e:
+            print(f"  {colorize('❌ UNSUPPORTED ENVIRONMENT', Colors.RED)}")
+            print(f"  {colorize(str(e), Colors.YELLOW)}")
+            builder.decryption_context.decryption_status = ProcessingStatus.FAILED
+            builder.decryption_context.failure_reason = str(e)
+        except NSSLibraryMissing as e:
+            print(f"  {colorize('❌ MISSING LIBRARY', Colors.RED)}")
+            print(f"  {colorize(str(e), Colors.YELLOW)}")
+            builder.decryption_context.decryption_status = ProcessingStatus.FAILED
+            builder.decryption_context.failure_reason = str(e)
+        except OSKeyringLocked as e:
+            print(f"  {colorize('❌ OS KEYRING LOCKED', Colors.RED)}")
+            print(f"  {colorize(str(e), Colors.YELLOW)}")
+            builder.decryption_context.decryption_status = ProcessingStatus.FAILED
+            builder.decryption_context.failure_reason = str(e)
+        
+        # Build final report
+        print(f"\n{colorize('═' * 70, Colors.GREEN)}")
+        print(f"{colorize('📝 Generating Forensic Reports', Colors.BOLD + Colors.GREEN)}")
+        print(f"{colorize('═' * 70, Colors.GREEN)}")
+        
+        # Build report object
+        report = builder.build()
+        
+        # Generate all output files
+        output_manager = ReportOutputManager(report, output_dir)
+        outputs = output_manager.generate_all()
+        
+        # Report generated files
+        for fmt, path in outputs.items():
+            print(f"  {colorize('✓', Colors.GREEN)} {fmt.upper()}: {path}")
+        
+        # Copy artifacts if requested
+        if copy_artifacts:
+            artifacts_dir = output_dir / "artifacts"
+            if artifacts_dir.exists():
+                artifact_count = len(list(artifacts_dir.glob('*')))
+                print(f"  {colorize('✓', Colors.GREEN)} Artifacts: {artifact_count} files copied to {artifacts_dir}")
+        
+        # Summary
+        print(f"\n{colorize('═' * 70, Colors.GREEN)}")
+        print(f"{colorize('✅ FORENSIC EXTRACTION COMPLETE', Colors.BOLD + Colors.GREEN)}")
+        print(f"{colorize('═' * 70, Colors.GREEN)}")
+        
+        # Statistics
+        total_items = sum(cat.total_count for cat in report.findings.values())
+        errors = len([e for e in report.errors_and_warnings if e.status == ProcessingStatus.FAILED])
+        warnings = len([e for e in report.errors_and_warnings if e.status == ProcessingStatus.PARTIAL])
+        
+        print(f"\n{colorize('Statistics:', Colors.CYAN)}")
+        print(f"  • Evidence files catalogued: {colorize(str(len(evidence_files)), Colors.YELLOW)}")
+        print(f"  • Data categories extracted: {colorize(str(len(report.findings)), Colors.YELLOW)}")
+        print(f"  • Total items extracted: {colorize(f'{total_items:,}', Colors.YELLOW)}")
+        print(f"  • Passwords decrypted: {colorize(str(len(decrypted_passwords)), Colors.RED + Colors.BOLD)}")
+        print(f"  • Errors: {colorize(str(errors), Colors.RED if errors else Colors.GREEN)}")
+        print(f"  • Warnings: {colorize(str(warnings), Colors.YELLOW if warnings else Colors.GREEN)}")
+        
+        print(f"\n{colorize('Output Directory:', Colors.CYAN)} {output_dir}")
+        print(f"\n{colorize('Generated Files:', Colors.CYAN)}")
+        print(f"  📄 report.html    - Human-readable forensic report")
+        print(f"  📄 report.json    - Machine-readable structured data")
+        print(f"  📄 summary.txt    - Executive summary")
+        if copy_artifacts and artifacts_dir.exists():
+            print(f"  📁 artifacts/     - Copied read-only source files")
+        
+        print_goodbye()
+        return True
+        
+    except Exception as e:
+        logger.exception(f"Forensic extraction failed: {e}")
+        print(f"\n{colorize(f'❌ Extraction failed: {e}', Colors.RED)}")
+        print_goodbye()
+        return False
+
+
 def main():
     """Main entry point with CLI argument parsing."""
     parser = argparse.ArgumentParser(
@@ -764,9 +976,16 @@ def main():
     parser.add_argument(
         "--format",
         "-f",
-        choices=['html', 'csv', 'md', 'all'],
-        default='all',
-        help="Output format (default: all)",
+        choices=['html', 'csv', 'md', 'all', 'forensic'],
+        default='forensic',
+        help="Output format: 'forensic' for DFIR-compliant reports (default), or legacy formats",
+    )
+
+    parser.add_argument(
+        "--copy-artifacts",
+        "-c",
+        action="store_true",
+        help="Copy source database files as read-only artifacts (forensic mode)",
     )
 
     parser.add_argument(
@@ -800,6 +1019,12 @@ def main():
         "--check-env",
         action="store_true",
         help="Check environment compatibility for password decryption and exit",
+    )
+
+    parser.add_argument(
+        "--legacy",
+        action="store_true",
+        help="Use legacy report format instead of new DFIR-compliant format",
     )
 
     args = parser.parse_args()
@@ -842,13 +1067,6 @@ def main():
             print_goodbye()
             return 0
 
-    # Parse formats - track if user explicitly specified format
-    format_provided = args.format != 'all'
-    if args.format == 'all':
-        formats = ['html', 'csv', 'md']
-    else:
-        formats = [args.format]
-
     # Track if user specified output path
     output_provided = args.output is not None
     if args.output:
@@ -856,19 +1074,45 @@ def main():
     else:
         output_dir = Path.home() / "Downloads" / "firefox_forensics_output"
 
+    # Determine which extraction mode to use
+    use_forensic_mode = (args.format == 'forensic' or args.format == 'all') and not args.legacy
+
     # Run extraction
     try:
         interactive = not args.no_interactive
-        success = extract_profile(
-            profile_path,
-            output_dir,
-            logger,
-            formats=formats,
-            interactive=interactive,
-            format_provided=format_provided,
-            output_provided=output_provided,
-        )
+        
+        if use_forensic_mode:
+            # Use new DFIR-compliant forensic extraction
+            success = extract_profile_forensic(
+                profile_path,
+                output_dir,
+                logger,
+                interactive=interactive,
+                copy_artifacts=args.copy_artifacts,
+                output_provided=output_provided,
+            )
+        else:
+            # Use legacy extraction mode
+            format_provided = args.format != 'all'
+            if args.format == 'all':
+                formats = ['html', 'csv', 'md']
+            elif args.format == 'forensic':
+                formats = ['html', 'csv', 'md']
+            else:
+                formats = [args.format]
+            
+            success = extract_profile(
+                profile_path,
+                output_dir,
+                logger,
+                formats=formats,
+                interactive=interactive,
+                format_provided=format_provided,
+                output_provided=output_provided,
+            )
+        
         return 0 if success else 1
+        
     except KeyboardInterrupt:
         print(f"\n{colorize('Extraction interrupted by user', Colors.YELLOW)}")
         print_goodbye()
