@@ -51,13 +51,18 @@ python main.py profile --format html --verbose  # HTML only with debug logs
 
 ## 📁 Output
 
-Default location: `~/Downloads/firefox_forensics_output/`
+Default location: `~/Downloads/firefox_forensics_output/` (Linux) or `Downloads\firefox_forensics_output` (Windows)
 
 ```
 output/
 ├── forensics_report.html    # Styled web report with decrypted passwords
 ├── forensics_report.md      # Markdown tables
-├── csv_export/              # 21 CSV files (history, cookies, forms, etc.)
+├── master_report.md         # Comprehensive summary
+├── csv_export/              # 19 CSV files
+│   ├── CREDENTIALS.csv      # Decrypted passwords!
+│   ├── browsing_history.csv
+│   ├── all_cookies.csv
+│   └── ...
 └── artifacts/               # 13 JSON files (extensions, logins, etc.)
 ```
 
@@ -74,7 +79,7 @@ All timestamps converted to `YYYY-MM-DD HH:MM:SS` format. Credentials and decryp
 - 💾 **DOM Storage** - localStorage and sessionStorage
 - 🖼️ **Favicons** - Site icons and mappings
 - 🧩 **Extensions** - Installed addons metadata
-- 🔑 **Saved Passwords** - Decrypted logins via NSS (Linux native Firefox)
+- 🔑 **Saved Passwords** - Decrypted logins via NSS (Windows & Linux)
 
 ### 🔓 Password Decryption
 

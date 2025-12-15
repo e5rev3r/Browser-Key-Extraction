@@ -45,24 +45,28 @@ python main.py --check-env
 
 ```
 firefox_forensics_output/
-├── databases/       # Raw SQLite table exports (CSV)
-├── forensics/       # Forensic query results (CSV)
-├── reports/         # Database summaries (Markdown)
-├── artifacts/       # Processed JSON files
-└── master_report.md # Comprehensive report
+├── forensics_report.html  # Interactive HTML report with decrypted passwords
+├── forensics_report.md    # Markdown report
+├── master_report.md       # Comprehensive summary
+├── csv_export/            # CSV files (history, cookies, credentials, etc.)
+│   ├── CREDENTIALS.csv    # Decrypted passwords!
+│   ├── browsing_history.csv
+│   ├── all_cookies.csv
+│   └── ... (19 files)
+└── artifacts/             # Processed JSON files (13 files)
 ```
 
 ## Key Features
 
 - ✓ Automatic database detection and table enumeration
 - ✓ 30+ forensic SQL queries (history, cookies, forms, permissions)
-- ✓ **Password decryption** via NSS (Linux native Firefox)
+- ✓ **Password decryption** via NSS (Windows & Linux)
 - ✓ HTML, CSV, and Markdown report generation
 - ✓ JSON artifact parsing (extensions, sessions)
 - ✓ Interactive profile selection
 - ✓ Master password support
 - ✓ Environment validation for decryption compatibility
-- ✓ Zero external dependencies (Python stdlib only, libnss3 for decryption)
+- ✓ Zero external dependencies (Python stdlib only)
 
 ## Password Decryption
 
@@ -78,13 +82,16 @@ python main.py --check-env
 
 ```bash
 # View browsing history
-cat firefox_forensics_output/forensics/places_browsing_history.csv
+cat firefox_forensics_output/csv_export/browsing_history.csv
+
+# View decrypted credentials
+cat firefox_forensics_output/csv_export/CREDENTIALS.csv
 
 # View auth tokens
-cat firefox_forensics_output/forensics/cookies_auth_tokens.csv
+cat firefox_forensics_output/csv_export/auth_tokens.csv
 
 # View form inputs
-cat firefox_forensics_output/forensics/formhistory_sensitive_fields.csv
+cat firefox_forensics_output/csv_export/all_form_history.csv
 ```
 
 ## Programmatic Usage

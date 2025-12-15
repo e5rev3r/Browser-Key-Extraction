@@ -13,7 +13,7 @@ This is a professional-grade forensics extraction tool for Mozilla Firefox profi
 - **Favicons**: Cached website icons
 - **Extensions**: Installed addons with metadata
 - **Preferences**: Browser configuration
-- **Saved Passwords**: Decrypted login credentials (Linux native Firefox)
+- **Saved Passwords**: Decrypted login credentials (Windows & Linux)
 
 ## Project Structure
 
@@ -117,10 +117,10 @@ python main.py --check-env ~/.mozilla/firefox/xxxx.default-release
 ```
 
 This checks:
-- ✅ libnss3 library availability
-- ✅ Firefox installation type (native vs Snap/Flatpak)
+- ✅ NSS library availability (nss3.dll on Windows, libnss3.so on Linux)
+- ✅ Firefox installation (required on Windows for NSS DLLs)
 - ✅ Profile compatibility
-- ✅ OS keyring integration status
+- ✅ OS keyring integration status (Linux only)
 
 ## Module Guide
 
@@ -398,12 +398,22 @@ Summary of entire extraction:
 
 ### 1. Locate Firefox Profile
 ```bash
+# Linux
 ls -la ~/.mozilla/firefox/
-# Find xxxx.default-release or similar
+
+# Windows (PowerShell)
+Get-ChildItem "$env:APPDATA\Mozilla\Firefox\Profiles"
+
+# Or just run the tool - it auto-detects profiles!
+python main.py
 ```
 
 ### 2. Extract Forensics
 ```bash
+# Interactive mode (recommended)
+python main.py
+
+# Or specify profile directly
 python main.py ~/.mozilla/firefox/xxxx.default-release --output my_case
 ```
 

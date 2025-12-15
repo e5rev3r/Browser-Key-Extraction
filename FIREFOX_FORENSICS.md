@@ -1,7 +1,12 @@
 # Firefox Profile Forensics
 
 ## Overview
-Firefox profiles (`~/.mozilla/firefox/<profile-name>/`) contain browsing history, cookies, credentials, bookmarks, downloads, and cached content revealing user activity and authentication details.
+Firefox profiles contain browsing history, cookies, credentials, bookmarks, downloads, and cached content revealing user activity and authentication details.
+
+**Profile Locations:**
+- **Linux**: `~/.mozilla/firefox/<profile-name>/`
+- **Windows**: `%APPDATA%\Mozilla\Firefox\Profiles\<profile-name>\`
+- **macOS**: `~/Library/Application Support/Firefox/Profiles/<profile-name>/`
 
 ---
 
@@ -131,8 +136,19 @@ echo "Extraction complete: $OUT"
 **logins.json**: Encrypted credentials (NSS encryption)
 **key4.db/key3.db**: Master password hash and decryption keys
 
+### Using This Tool (Recommended)
 ```bash
-# Decrypt using firefox-decrypt tool (https://github.com/unode/firefox_decrypt)
+# Windows or Linux - automatic decryption
+python main.py --check-env  # Verify support
+python main.py              # Interactive extraction with password decryption
+
+# Non-interactive
+python main.py /path/to/profile --output ./forensics --no-interactive
+```
+
+### Alternative: firefox-decrypt
+```bash
+# Using firefox-decrypt tool (https://github.com/unode/firefox_decrypt)
 cp logins.json key4.db .
 python3 firefox_decrypt.py . --format csv > decrypted_logins.csv
 ```
