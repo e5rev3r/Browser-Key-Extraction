@@ -99,7 +99,6 @@ Browser-Key-Extraction/
 ├── sql_queries.py       # Firefox & Chromium SQL queries
 ├── nss_decrypt.py       # Firefox password decryption (NSS)
 ├── chromium_decrypt.py  # Chromium password decryption (DPAPI/AES)
-├── utils.py             # Utility functions
 └── README.md            # This file
 ```
 

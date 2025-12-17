@@ -75,9 +75,19 @@ from browser_profiles import (
     BrowserProfile, BrowserType, BrowserFamily, BrowserInstallation,
     detect_all_browsers, detect_browser_from_path,
 )
-from extractors import FirefoxExtractor, ChromiumExtractor, ExtractionResult
+from extractors import FirefoxExtractor, ChromiumExtractor
 from sql_queries import FIREFOX_QUERIES, CHROMIUM_QUERIES
-from utils import setup_logging, validate_profile_path, get_profile_info, format_bytes
+
+
+def setup_logging(log_level: int = logging.INFO) -> logging.Logger:
+    """Configure logging for the forensics tool."""
+    logger = logging.getLogger("browser_forensics")
+    logger.setLevel(log_level)
+    handler = logging.StreamHandler()
+    handler.setLevel(log_level)
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    logger.addHandler(handler)
+    return logger
 
 
 # =============================================================================

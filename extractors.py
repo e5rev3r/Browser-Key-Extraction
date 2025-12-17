@@ -1,29 +1,13 @@
-"""Database extraction for Firefox and Chromium browsers.
+"""Database extraction for Firefox and Chromium browsers."""
 
-Provides SQLite and JSON extraction classes for browser forensics.
-"""
-
-import csv
 import json
 import shutil
 import sqlite3
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from sql_queries import FIREFOX_QUERIES, CHROMIUM_QUERIES, webkit_to_unix
-
-
-@dataclass
-class ExtractionResult:
-    """Result of an extraction operation."""
-    success: bool
-    database: str
-    rows_extracted: int
-    error: Optional[str] = None
-    output_path: Optional[Path] = None
-    data: Optional[List[Dict[str, Any]]] = None
+from sql_queries import FIREFOX_QUERIES, CHROMIUM_QUERIES
 
 
 class FirefoxExtractor:
@@ -346,66 +330,3 @@ class ChromiumExtractor:
             return extensions
         except (json.JSONDecodeError, IOError):
             return []
-
-
-# Legacy compatibility aliases
-FirefoxDatabaseExtractor = FirefoxExtractor
-FirefoxJSONExtractor = FirefoxExtractor
-ChromiumDatabaseExtractor = ChromiumExtractor
-ChromiumJSONExtractor = ChromiumExtractor
-
-
-class ForensicReportGenerator:
-    """Generate summary reports from extracted forensic data."""
-
-    @staticmethod
-    def generate_database_summary(db_path: Path, tables: List[str], results: Dict[str, int]) -> str:
-        """Generate a text summary for a database."""
-        summary = f"# {db_path.name} Summary\n\n"
-        summary += f"- **Path**: {db_path}\n"
-        summary += f"- **Size**: {db_path.stat().st_size:,} bytes\n\n"
-        summary += f"## Tables ({len(tables)})\n"
-        for table in tables:
-            summary += f"- {table}\n"
-        summary += "\n## Query Results\n"
-        for name, count in sorted(results.items()):
-            summary += f"- {name}: {count} rows\n"
-        return summary
-
-    @staticmethod
-    def generate_master_report(
-        profile_path: Path,
-        extraction_results: List[ExtractionResult],
-        json_data: Dict[str, Dict],
-        output_dir: Path,
-    ) -> str:
-        """Generate comprehensive master report."""
-        total_rows = sum(r.rows_extracted for r in extraction_results)
-        report = f"""# Browser Forensics Extraction Report
-
-## Profile Information
-- **Path**: {profile_path}
-- **Output**: {output_dir}
-
-## Extraction Summary
-
-### Databases
-"""
-        for result in extraction_results:
-            status = "✓" if result.success else "✗"
-            report += f"- {result.database}: {status} ({result.rows_extracted} rows)\n"
-
-        report += f"\n**Total Rows**: {total_rows:,}\n\n"
-        report += "### JSON Files\n"
-        for filename in json_data:
-            report += f"- {filename}\n"
-
-        report += "\n## Artifact Categories\n"
-        report += "- Browsing history and visits\n"
-        report += "- Bookmarks\n"
-        report += "- Cookies and authentication tokens\n"
-        report += "- Form data and searches\n"
-        report += "- Site permissions\n"
-        report += "- Extensions\n"
-
-        return report
