@@ -114,6 +114,24 @@ Dependencies (`pycryptodome`) are **automatically installed** when you run `main
 ### Chromium Requirements  
 - **All platforms**: Handled automatically by the tool
 
+### ⚠️ Chrome 127+ App-Bound Encryption (v20)
+
+Starting with Chrome 127 (July 2024), Chrome, Edge, Brave, and other Chromium browsers use **App-Bound Encryption** for saved passwords. This security feature binds password decryption to the browser's code-signing certificate.
+
+**Affected browsers**: Chrome 127+, Edge, Brave, Opera, Vivaldi (recent versions)
+
+**What this means**: 
+- Passwords encrypted with v20 cannot be decrypted by external tools
+- The tool will show: `[v20 PROTECTED - Use browser export]`
+
+**Workaround**: Export passwords directly from the browser:
+1. Open browser Settings
+2. Go to **Passwords** (or **Autofill > Password Manager**)
+3. Click **Export Passwords** (⋮ menu)
+4. Save the CSV file
+
+Older passwords using v10 encryption can still be decrypted normally.
+
 ## 📊 Extracted Data
 
 | Category | Firefox | Chromium |
