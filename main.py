@@ -42,12 +42,11 @@ def check_and_install_dependencies():
     except ImportError:
         missing.append("pycryptodome")
     
-    # Check secretstorage (optional for Linux GNOME keyring)
-    if sys.platform == "linux":
-        try:
-            import secretstorage
-        except ImportError:
-            pass  # Optional, don't add to missing
+    # Check PythonForWindows (for v20 admin decryption)
+    try:
+        import windows
+    except ImportError:
+        missing.append("PythonForWindows")
     
     if missing:
         print(f"\033[93m[!] Missing dependencies: {', '.join(missing)}\033[0m")
@@ -63,7 +62,7 @@ def check_and_install_dependencies():
             print(f"\033[92m[+] Dependencies installed successfully!\033[0m\n")
         except subprocess.CalledProcessError:
             print(f"\033[91m[!] Failed to install. Run: pip install {' '.join(missing)}\033[0m")
-            print(f"\033[93m[*] Continuing without Chromium password decryption...\033[0m\n")
+            print(f"\033[93m[*] Continuing without v20 decryption support...\033[0m\n")
         except Exception as e:
             print(f"\033[91m[!] Install error: {e}\033[0m\n")
 
@@ -616,15 +615,24 @@ def extract_firefox(
     print(f"\n{colorize('[*] Saving reports...', Colors.CYAN)}")
     
     for name, data in all_data.items():
-        if name == 'passwords':
-            continue  # Don't save passwords to CSV
-        if data and isinstance(data, list) and isinstance(data[0], dict):
-            csv_path = artifacts_dir / f"{name}.csv"
-            with open(csv_path, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=data[0].keys())
-                writer.writeheader()
-                writer.writerows(data)
-            print(f"  {colorize('✓', Colors.GREEN)} artifacts/{csv_path.name}")
+        if not data or not isinstance(data, list):
+            continue
+        
+        # Convert dataclass objects to dicts if needed
+        if hasattr(data[0], '__dataclass_fields__'):
+            from dataclasses import asdict
+            data_dicts = [asdict(item) for item in data]
+        elif isinstance(data[0], dict):
+            data_dicts = data
+        else:
+            continue
+        
+        csv_path = artifacts_dir / f"{name}.csv"
+        with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=data_dicts[0].keys())
+            writer.writeheader()
+            writer.writerows(data_dicts)
+        print(f"  {colorize('✓', Colors.GREEN)} artifacts/{csv_path.name}")
 
     # Summary
     summary_path = artifacts_dir / "summary.txt"
@@ -727,29 +735,50 @@ def extract_chromium(
     if not skip_passwords and (extract_all or 'passwords' in categories):
         print(f"\n{colorize('[*] Attempting password decryption...', Colors.CYAN)}")
         try:
-            from chromium_decrypt import decrypt_chromium_passwords, check_decryption_requirements
+            from chromium_decrypt import (
+                decrypt_chromium_passwords, check_decryption_requirements,
+                has_v20_encrypted_data, is_admin, request_admin_elevation
+            )
+            
+            # Check for v20 encryption FIRST
+            has_v20, v20_pass, v20_cook = has_v20_encrypted_data(profile.profile_path)
+            if has_v20 and not is_admin():
+                print(f"  {colorize('⚠', Colors.YELLOW)} Detected {v20_pass} v20-encrypted passwords, {v20_cook} cookies")
+                print(f"  {colorize('⚠', Colors.YELLOW)} v20 encryption requires Administrator privileges")
+                
+                response = input(f"\n{colorize('?', Colors.GREEN)} Restart with admin privileges? [y/N]: ").strip().lower()
+                if response in ('y', 'yes'):
+                    print(f"  {colorize('[*]', Colors.CYAN)} Requesting elevation... Please approve UAC prompt.")
+                    if request_admin_elevation():
+                        print(f"  {colorize('[*]', Colors.CYAN)} Launched elevated process. This instance will exit.")
+                        sys.exit(0)
+                    else:
+                        print(f"  {colorize('[!]', Colors.RED)} Failed to elevate. Continuing without v20 decryption.")
             
             reqs_met, missing = check_decryption_requirements()
             if not reqs_met:
-                print(f"  {colorize('✗', Colors.RED)} Missing: {', '.join(missing)}")
+                print(f"  {colorize('⚠', Colors.YELLOW)} Missing: {', '.join(missing)}")
+                print(f"  {colorize('  ', Colors.YELLOW)} v20 passwords may not decrypt fully")
+            
+            browser_key = profile.browser_type.value.lower()
+            credentials, errors = decrypt_chromium_passwords(
+                profile.profile_path, profile.user_data_dir, browser_name=browser_key
+            )
+            if credentials:
+                all_data['passwords'] = credentials
+                decryption_success = True
+                print(f"  {colorize('✓', Colors.GREEN)} Passwords: {len(credentials)} decrypted")
+                
+                # Check for v20 encrypted passwords and show warning
+                v20_count = sum(1 for c in credentials if '[v20 PROTECTED' in c.password)
+                if v20_count > 0:
+                    print(f"  {colorize('⚠', Colors.YELLOW)} {v20_count} password(s) still v20-protected (run as Admin)")
+                
+                print_passwords_chromium(credentials)
+            elif errors:
+                print(f"  {colorize('✗', Colors.RED)} {errors[0] if errors else 'Unknown error'}")
             else:
-                credentials, errors = decrypt_chromium_passwords(profile.profile_path, profile.user_data_dir)
-                if credentials:
-                    all_data['passwords'] = credentials
-                    decryption_success = True
-                    print(f"  {colorize('✓', Colors.GREEN)} Passwords: {len(credentials)} decrypted")
-                    
-                    # Check for v20 encrypted passwords and show warning
-                    v20_count = sum(1 for c in credentials if '[v20 PROTECTED' in c.password)
-                    if v20_count > 0:
-                        print(f"  {colorize('⚠', Colors.YELLOW)} {v20_count} password(s) use Chrome 127+ App-Bound Encryption")
-                        print(f"  {colorize('  ', Colors.YELLOW)} Export from browser: Settings > Passwords > Export")
-                    
-                    print_passwords_chromium(credentials)
-                elif errors:
-                    print(f"  {colorize('✗', Colors.RED)} {errors[0] if errors else 'Unknown error'}")
-                else:
-                    print(f"  {colorize('•', Colors.YELLOW)} No saved passwords")
+                print(f"  {colorize('•', Colors.YELLOW)} No saved passwords")
         except Exception as e:
             print(f"  {colorize('✗', Colors.RED)} Password decryption failed: {e}")
 
@@ -765,15 +794,24 @@ def extract_chromium(
     print(f"\n{colorize('[*] Saving reports...', Colors.CYAN)}")
     
     for name, data in all_data.items():
-        if name == 'passwords':
+        if not data or not isinstance(data, list):
             continue
-        if data and isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
-            csv_path = artifacts_dir / f"{name}.csv"
-            with open(csv_path, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=data[0].keys())
-                writer.writeheader()
-                writer.writerows(data)
-            print(f"  {colorize('✓', Colors.GREEN)} artifacts/{csv_path.name}")
+        
+        # Convert dataclass objects to dicts if needed
+        if hasattr(data[0], '__dataclass_fields__'):
+            from dataclasses import asdict
+            data_dicts = [asdict(item) for item in data]
+        elif isinstance(data[0], dict):
+            data_dicts = data
+        else:
+            continue
+        
+        csv_path = artifacts_dir / f"{name}.csv"
+        with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=data_dicts[0].keys())
+            writer.writeheader()
+            writer.writerows(data_dicts)
+        print(f"  {colorize('✓', Colors.GREEN)} artifacts/{csv_path.name}")
 
     # Summary
     summary_path = artifacts_dir / "summary.txt"
