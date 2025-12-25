@@ -1,20 +1,5 @@
 #!/usr/bin/env python3
-"""Browser Forensics Extraction Tool.
-
-A comprehensive Python utility for extracting and analyzing forensic artifacts
-from web browsers including Firefox and Chromium-based browsers.
-
-Supported browsers:
-- Firefox (Gecko engine)
-- Chrome, Chromium, Edge, Brave, Opera, Vivaldi (Chromium engine)
-
-Usage:
-    python main.py                    # Auto-detect all browsers
-    python main.py -b firefox         # Firefox only
-    python main.py -b chrome          # Chrome only
-    python main.py /path/to/profile   # Specific profile path
-    python main.py --list-browsers    # List detected browsers
-"""
+"""Browser Forensics Extraction Tool - Firefox, Chrome, Edge, Brave, Opera, Vivaldi."""
 
 import argparse
 import json
@@ -28,12 +13,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 
-# =============================================================================
-# Auto Dependency Checker - Runs on startup
-# =============================================================================
-
+# Auto Dependency Installer
 def check_and_install_dependencies():
-    """Check and install required dependencies automatically."""
     missing = []
     
     # Check pycryptodome (required for Chromium password decryption)
@@ -80,7 +61,6 @@ from html_report import generate_html_report
 
 
 def setup_logging(log_level: int = logging.INFO) -> logging.Logger:
-    """Configure logging for the forensics tool."""
     logger = logging.getLogger("browser_forensics")
     logger.setLevel(log_level)
     handler = logging.StreamHandler()
@@ -98,7 +78,6 @@ def generate_summary_txt(
     decryption_success: bool = False,
     has_master_password: bool = False,
 ) -> None:
-    """Generate a professional executive summary text file."""
     import platform
     import hashlib
     import getpass
@@ -258,10 +237,7 @@ def generate_summary_txt(
         f.write('\n'.join(lines))
 
 
-# =============================================================================
-# ANSI Colors for Terminal Output
-# =============================================================================
-
+# ANSI Colors
 class Colors:
     RED = '\033[91m'
     GREEN = '\033[92m'
@@ -275,7 +251,6 @@ class Colors:
 
 
 def colorize(text: str, color: str) -> str:
-    """Apply color to text if terminal supports it."""
     return f"{color}{text}{Colors.RESET}" if sys.stdout.isatty() else text
 
 
@@ -287,12 +262,8 @@ def safe_print(text: str):
         print(text.encode('ascii', 'replace').decode('ascii'))
 
 
-# =============================================================================
 # UI Functions
-# =============================================================================
-
 def print_banner():
-    """Print the tool banner."""
     banner = f"""
 {colorize('=' * 72, Colors.CYAN)}
 {colorize('  BROWSER FORENSICS EXTRACTION TOOL', Colors.BOLD + Colors.WHITE)}
