@@ -1,18 +1,5 @@
 #!/usr/bin/env python3
-"""Browser Profile Detection Module.
-
-Auto-detects installed browsers and their profile locations across
-Windows, Linux, and macOS systems.
-
-Supported browsers:
-- Google Chrome
-- Chromium
-- Microsoft Edge
-- Brave Browser
-- Opera
-- Vivaldi
-- Firefox (for unified detection)
-"""
+"""Browser Profile Detection - Windows, Linux, macOS."""
 
 import os
 import sys
@@ -24,7 +11,6 @@ from typing import Dict, List, Optional, Tuple
 
 
 class BrowserType(Enum):
-    """Supported browser types."""
     FIREFOX = "firefox"
     CHROME = "chrome"
     CHROMIUM = "chromium"
@@ -35,14 +21,12 @@ class BrowserType(Enum):
 
 
 class BrowserFamily(Enum):
-    """Browser engine family."""
-    GECKO = "gecko"      # Firefox
+    GECKO = "gecko"
     CHROMIUM = "chromium"  # Chrome, Edge, Brave, etc.
 
 
 @dataclass
 class BrowserProfile:
-    """Represents a detected browser profile."""
     browser_type: BrowserType
     browser_family: BrowserFamily
     profile_name: str
@@ -58,7 +42,6 @@ class BrowserProfile:
 
 @dataclass 
 class BrowserInstallation:
-    """Represents an installed browser."""
     browser_type: BrowserType
     browser_family: BrowserFamily
     user_data_dir: Path
@@ -67,12 +50,8 @@ class BrowserInstallation:
     executable_path: Optional[Path] = None
 
 
-# =============================================================================
 # Platform-specific profile locations
-# =============================================================================
-
 def get_chromium_paths_linux() -> Dict[BrowserType, List[Path]]:
-    """Get Chromium-based browser paths on Linux."""
     home = Path.home()
     config_dir = home / ".config"
     snap_dir = home / "snap"
@@ -110,7 +89,6 @@ def get_chromium_paths_linux() -> Dict[BrowserType, List[Path]]:
 
 
 def get_chromium_paths_windows() -> Dict[BrowserType, List[Path]]:
-    """Get Chromium-based browser paths on Windows."""
     local_appdata = Path(os.environ.get("LOCALAPPDATA", ""))
     appdata = Path(os.environ.get("APPDATA", ""))
     
@@ -193,24 +171,8 @@ def get_firefox_paths() -> Dict[BrowserType, List[Path]]:
         }
 
 
-# =============================================================================
-# Profile Detection Functions
-# =============================================================================
-
+# Profile Detection
 def detect_chromium_profiles(user_data_dir: Path, browser_type: BrowserType) -> List[BrowserProfile]:
-    """Detect all profiles in a Chromium user data directory.
-    
-    Chromium stores profiles in folders like:
-    - Default (main profile)
-    - Profile 1, Profile 2, etc. (additional profiles)
-    
-    Args:
-        user_data_dir: Path to the User Data directory
-        browser_type: Type of browser
-    
-    Returns:
-        List of detected BrowserProfile objects
-    """
     profiles = []
     
     if not user_data_dir.exists():
@@ -258,18 +220,7 @@ def detect_chromium_profiles(user_data_dir: Path, browser_type: BrowserType) -> 
 
 
 def detect_firefox_profiles(profiles_dir: Path) -> List[BrowserProfile]:
-    """Detect all Firefox profiles in a profiles directory.
-    
-    Firefox uses profiles.ini and random folder names like:
-    - xxxx.default
-    - xxxx.default-release
-    
-    Args:
-        profiles_dir: Path to Firefox profiles directory
-    
-    Returns:
-        List of detected BrowserProfile objects
-    """
+    """Firefox profiles use folder names like xxxx.default-release"""
     profiles = []
     
     if not profiles_dir.exists():
@@ -296,16 +247,8 @@ def detect_firefox_profiles(profiles_dir: Path) -> List[BrowserProfile]:
     return profiles
 
 
-# =============================================================================
-# Main Detection Functions
-# =============================================================================
-
+# Main Detection
 def detect_all_browsers() -> List[BrowserInstallation]:
-    """Detect all installed browsers and their profiles.
-    
-    Returns:
-        List of BrowserInstallation objects with detected profiles
-    """
     installations = []
     
     # Get platform-specific paths
@@ -348,14 +291,6 @@ def detect_all_browsers() -> List[BrowserInstallation]:
 
 
 def detect_browser_from_path(profile_path: Path) -> Optional[Tuple[BrowserType, BrowserFamily]]:
-    """Detect browser type from a profile path.
-    
-    Args:
-        profile_path: Path to a browser profile
-    
-    Returns:
-        Tuple of (BrowserType, BrowserFamily) or None if unknown
-    """
     path_str = str(profile_path).lower()
     
     # Check for Firefox indicators
@@ -392,14 +327,6 @@ def detect_browser_from_path(profile_path: Path) -> Optional[Tuple[BrowserType, 
 
 
 def get_default_profile(browser_type: BrowserType) -> Optional[BrowserProfile]:
-    """Get the default profile for a specific browser.
-    
-    Args:
-        browser_type: Type of browser to find
-    
-    Returns:
-        Default BrowserProfile or None if not found
-    """
     installations = detect_all_browsers()
     
     for installation in installations:
@@ -415,11 +342,6 @@ def get_default_profile(browser_type: BrowserType) -> Optional[BrowserProfile]:
 
 
 def list_all_profiles() -> List[BrowserProfile]:
-    """Get a flat list of all detected browser profiles.
-    
-    Returns:
-        List of all BrowserProfile objects
-    """
     profiles = []
     for installation in detect_all_browsers():
         profiles.extend(installation.profiles)
@@ -451,9 +373,6 @@ def print_detected_browsers():
     print("\n" + "=" * 60)
 
 
-# =============================================================================
-# CLI for testing
-# =============================================================================
-
+# CLI Test
 if __name__ == "__main__":
     print_detected_browsers()
