@@ -17,9 +17,11 @@ That's it! The tool automatically checks and installs required dependencies.
 ## ✨ Features
 
 - 🌐 **Multi-Browser Support** - Firefox, Chrome, Edge, Brave, Opera, Vivaldi
+- � **Cross-Platform** - Windows and Linux support
 - 🔎 **Forensic Queries** - History, cookies, forms, permissions, bookmarks
 - 🔓 **Password Decryption** - NSS for Firefox, DPAPI/AES for Chromium
-- 📊 **CSV Reports** - Export data to spreadsheet-compatible format
+- 🍪 **Cookie Decryption** - Full v10/v11/v20 cookie decryption
+- 📊 **JSON Reports** - Export data to JSON format with HTML report
 - 🎯 **Selective Extraction** - Extract only what you need
 - 🖥️ **Terminal Output** - Print data directly with `--print-only`
 - 💬 **Interactive Mode** - Friendly prompts guide you through extraction
@@ -99,7 +101,24 @@ Browser-Key-Extraction/
 ├── sql_queries.py       # Firefox & Chromium SQL queries
 ├── nss_decrypt.py       # Firefox password decryption (NSS)
 ├── chromium_decrypt.py  # Chromium password decryption (DPAPI/AES)
+├── html_report.py       # HTML report generation
 └── README.md            # This file
+```
+
+## 📤 Output Format
+
+The tool generates output in the following structure:
+```
+output_folder/
+├── report.html          # Interactive HTML report
+├── summary.txt          # Quick text summary
+└── artifacts/           # JSON data files
+    ├── history.json
+    ├── cookie.json
+    ├── password.json
+    ├── autofill.json
+    ├── bookmark.json
+    └── download.json
 ```
 
 ## 🔒 Password Decryption
@@ -111,10 +130,18 @@ Dependencies (`pycryptodome`) are **automatically installed** when you run `main
 - **Linux**: `libnss3` system library (install: `sudo apt install libnss3` or `sudo pacman -S nss`)
 - **Windows**: Firefox must be installed (uses bundled NSS DLLs)
 
-### Chromium Requirements  
-- **All platforms**: Handled automatically by the tool
+### Chromium Requirements (Windows)
+- **v10 encryption** (Chrome < 127): Automatic DPAPI decryption
+- **v20 encryption** (Chrome 127+): Requires **Administrator privileges**
+  - Install `PythonForWindows` for full support: `pip install PythonForWindows`
+  - Run as Admin to decrypt v20 passwords and cookies
 
-### ⚠️ Chrome 127+ App-Bound Encryption (v20)
+### Chromium Requirements (Linux)
+- **v11 encryption**: Automatic AES-128-CBC decryption
+- Uses GNOME Keyring/libsecret if available, or hardcoded "peanuts" password
+- Optional: `pip install secretstorage` for keyring support
+
+### ⚠️ Chrome 127+ App-Bound Encryption (v20) - Windows Only
 
 Starting with Chrome 127 (July 2024), Chrome, Edge, Brave, and other Chromium browsers use **App-Bound Encryption** for saved passwords. This security feature binds password decryption to the browser's code-signing certificate.
 

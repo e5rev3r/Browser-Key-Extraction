@@ -17,7 +17,7 @@ Usage:
 """
 
 import argparse
-import csv
+import json
 import logging
 import os
 import shutil
@@ -235,6 +235,18 @@ def generate_summary_txt(
         if len(file_hashes) > 10:
             lines.append(f"  ... and {len(file_hashes) - 10} more files")
         lines.append("")
+    
+    # Artifacts info
+    lines.append("OUTPUT FILES")
+    lines.append("-" * 40)
+    lines.append("  report.html          - Full interactive report")
+    lines.append("  summary.txt          - This executive summary")
+    lines.append("  artifacts/           - Extracted data in JSON format")
+    lines.append("    - cookie.json      - Browser cookies")
+    lines.append("    - password.json    - Saved credentials")
+    lines.append("    - autofill.json    - Form autofill data")
+    lines.append("    - history.json     - Browsing history")
+    lines.append("")
     
     # Footer
     lines.append(separator)
@@ -614,6 +626,17 @@ def extract_firefox(
 
     print(f"\n{colorize('[*] Saving reports...', Colors.CYAN)}")
     
+    # Map internal names to output filenames
+    artifact_name_map = {
+        'cookies': 'cookie',
+        'passwords': 'password',
+        'autofill': 'autofill',
+        'history': 'history',
+        'bookmarks': 'bookmark',
+        'downloads': 'download',
+        'extensions': 'extension',
+    }
+    
     for name, data in all_data.items():
         if not data or not isinstance(data, list):
             continue
@@ -627,23 +650,23 @@ def extract_firefox(
         else:
             continue
         
-        csv_path = artifacts_dir / f"{name}.csv"
-        with open(csv_path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=data_dicts[0].keys())
-            writer.writeheader()
-            writer.writerows(data_dicts)
-        print(f"  {colorize('✓', Colors.GREEN)} artifacts/{csv_path.name}")
+        # Use mapped name or original name for JSON output
+        output_name = artifact_name_map.get(name, name)
+        json_path = artifacts_dir / f"{output_name}.json"
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(data_dicts, f, indent=2, ensure_ascii=False, default=str)
+        print(f"  {colorize('✓', Colors.GREEN)} artifacts/{json_path.name}")
 
-    # Summary
-    summary_path = artifacts_dir / "summary.txt"
+    # Summary at root level
+    summary_path = output_dir / "summary.txt"
     generate_summary_txt(
         "Firefox", profile_path, all_data, summary_path,
         decryption_success=decryption_success,
         has_master_password=has_master_password
     )
-    print(f"  {colorize('✓', Colors.GREEN)} artifacts/summary.txt")
+    print(f"  {colorize('✓', Colors.GREEN)} summary.txt")
 
-    # Generate HTML report
+    # Generate HTML report at root level
     html_path = output_dir / "report.html"
     generate_html_report("Firefox", profile_path, all_data, html_path)
     print(f"  {colorize('✓', Colors.GREEN)} report.html")
@@ -693,12 +716,29 @@ def extract_chromium(
                     print_history(data)
 
         if extract_all or 'cookies' in categories:
-            data = extractor.get_cookies()
-            if data:
-                all_data['cookies'] = data
-                print(f"  {colorize('✓', Colors.GREEN)} Cookies: {len(data)} records")
+            # Try to get decrypted cookies first
+            browser_key = profile.browser_type.value.lower()
+            decrypted_cookies, cookie_errors = extractor.get_decrypted_cookies(browser_key)
+            if decrypted_cookies:
+                all_data['cookies'] = decrypted_cookies
+                print(f"  {colorize('✓', Colors.GREEN)} Cookies: {len(decrypted_cookies)} records (decrypted)")
+                # Check for v20 protected cookies
+                v20_cookie_count = sum(1 for c in decrypted_cookies if c.get('value') == '[v20 PROTECTED]')
+                if v20_cookie_count > 0:
+                    print(f"  {colorize('⚠', Colors.YELLOW)} {v20_cookie_count} cookie(s) still v20-protected (run as Admin)")
                 if print_only:
-                    print_cookies(data)
+                    print_cookies(decrypted_cookies)
+            else:
+                # Fallback to raw cookies if decryption fails
+                data = extractor.get_cookies()
+                if data:
+                    all_data['cookies'] = data
+                    print(f"  {colorize('✓', Colors.GREEN)} Cookies: {len(data)} records (raw)")
+                    if print_only:
+                        print_cookies(data)
+                if cookie_errors:
+                    for err in cookie_errors[:3]:  # Show first 3 errors
+                        print(f"  {colorize('⚠', Colors.YELLOW)} {err}")
 
         if extract_all or 'downloads' in categories:
             data = extractor.get_downloads()
@@ -793,6 +833,17 @@ def extract_chromium(
 
     print(f"\n{colorize('[*] Saving reports...', Colors.CYAN)}")
     
+    # Map internal names to output filenames
+    artifact_name_map = {
+        'cookies': 'cookie',
+        'passwords': 'password',
+        'autofill': 'autofill',
+        'history': 'history',
+        'bookmarks': 'bookmark',
+        'downloads': 'download',
+        'extensions': 'extension',
+    }
+    
     for name, data in all_data.items():
         if not data or not isinstance(data, list):
             continue
@@ -806,23 +857,23 @@ def extract_chromium(
         else:
             continue
         
-        csv_path = artifacts_dir / f"{name}.csv"
-        with open(csv_path, 'w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=data_dicts[0].keys())
-            writer.writeheader()
-            writer.writerows(data_dicts)
-        print(f"  {colorize('✓', Colors.GREEN)} artifacts/{csv_path.name}")
+        # Use mapped name or original name for JSON output
+        output_name = artifact_name_map.get(name, name)
+        json_path = artifacts_dir / f"{output_name}.json"
+        with open(json_path, 'w', encoding='utf-8') as f:
+            json.dump(data_dicts, f, indent=2, ensure_ascii=False, default=str)
+        print(f"  {colorize('✓', Colors.GREEN)} artifacts/{json_path.name}")
 
-    # Summary
-    summary_path = artifacts_dir / "summary.txt"
+    # Summary at root level
+    summary_path = output_dir / "summary.txt"
     generate_summary_txt(
         browser_name, profile.profile_path, all_data, summary_path,
         decryption_success=decryption_success,
         has_master_password=False
     )
-    print(f"  {colorize('✓', Colors.GREEN)} artifacts/summary.txt")
+    print(f"  {colorize('✓', Colors.GREEN)} summary.txt")
 
-    # Generate HTML report
+    # Generate HTML report at root level
     html_path = output_dir / "report.html"
     generate_html_report(browser_name, profile.profile_path, all_data, html_path)
     print(f"  {colorize('✓', Colors.GREEN)} report.html")

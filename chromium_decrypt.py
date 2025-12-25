@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""Chromium Password and Cookie Decryption Module (Windows Only).
+"""Chromium Password and Cookie Decryption Module (Windows & Linux).
 
 Decrypts saved passwords and cookies from Chromium-based browsers 
-(Chrome, Edge, Brave, etc.) on Windows.
+(Chrome, Edge, Brave, etc.) on Windows and Linux.
 
 Encryption methods:
-- v10: AES-256-GCM with DPAPI-protected key (Chrome < 127)
-- v20: App-Bound Encryption with DPAPI + hardcoded keys (Chrome 127+)
-- Legacy: Direct DPAPI encryption (older Chrome)
+- Windows v10: AES-256-GCM with DPAPI-protected key (Chrome < 127)
+- Windows v20: App-Bound Encryption with DPAPI + hardcoded keys (Chrome 127+)
+- Windows Legacy: Direct DPAPI encryption (older Chrome)
+- Linux: AES-256-GCM with key from GNOME Keyring/libsecret or hardcoded
 
-v20 Decryption (Chrome 127+):
+Windows v20 Decryption (Chrome 127+):
 - Requires Administrator privileges
 - Uses LSASS impersonation for SYSTEM DPAPI context
 - Handles flag 1 (AES), flag 2 (ChaCha20), flag 3 (NCrypt+XOR)
 
 Requirements:
-- Windows OS
-- pycryptodome (pip install pycryptodome)
-- PythonForWindows (pip install PythonForWindows) - for v20 admin decryption
+- Windows: pycryptodome, PythonForWindows (for v20 admin decryption)
+- Linux: pycryptodome, secretstorage (optional, for GNOME Keyring)
 """
 
 import base64
@@ -29,16 +29,18 @@ import shutil
 import struct
 import sys
 import tempfile
-import ctypes
-from ctypes import wintypes
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict, Any
 
-# Windows-only check
-if sys.platform != "win32":
-    raise ImportError("This module only supports Windows")
+# Platform-specific imports
+IS_WINDOWS = sys.platform == "win32"
+IS_LINUX = sys.platform.startswith("linux")
+
+if IS_WINDOWS:
+    import ctypes
+    from ctypes import wintypes
 
 
 @dataclass
@@ -97,54 +99,159 @@ class AdminRequired(ChromiumDecryptionError):
 
 
 # =============================================================================
-# Windows DPAPI Functions
+# Windows DPAPI Functions (Windows only)
 # =============================================================================
 
-class DATA_BLOB(ctypes.Structure):
-    """Windows DATA_BLOB structure for DPAPI."""
-    _fields_ = [
-        ("cbData", wintypes.DWORD),
-        ("pbData", ctypes.POINTER(ctypes.c_char)),
-    ]
+if IS_WINDOWS:
+    class DATA_BLOB(ctypes.Structure):
+        """Windows DATA_BLOB structure for DPAPI."""
+        _fields_ = [
+            ("cbData", wintypes.DWORD),
+            ("pbData", ctypes.POINTER(ctypes.c_char)),
+        ]
 
 
-def _win_dpapi_decrypt(encrypted_data: bytes) -> bytes:
-    """Decrypt data using Windows DPAPI.
-    
-    Args:
-        encrypted_data: DPAPI-encrypted bytes
-    
-    Returns:
-        Decrypted bytes
-    
-    Raises:
-        DecryptionFailed: If DPAPI decryption fails
-    """
-    crypt32 = ctypes.windll.crypt32
-    kernel32 = ctypes.windll.kernel32
-    
-    input_blob = DATA_BLOB()
-    input_blob.cbData = len(encrypted_data)
-    input_blob.pbData = ctypes.cast(
-        ctypes.create_string_buffer(encrypted_data, len(encrypted_data)),
-        ctypes.POINTER(ctypes.c_char)
-    )
-    
-    output_blob = DATA_BLOB()
-    
-    result = crypt32.CryptUnprotectData(
-        ctypes.byref(input_blob),
-        None, None, None, None, 0,
-        ctypes.byref(output_blob)
-    )
-    
-    if not result:
-        raise DecryptionFailed(f"DPAPI decryption failed: {ctypes.GetLastError()}")
-    
-    decrypted = ctypes.string_at(output_blob.pbData, output_blob.cbData)
-    kernel32.LocalFree(output_blob.pbData)
-    
-    return decrypted
+    def _win_dpapi_decrypt(encrypted_data: bytes) -> bytes:
+        """Decrypt data using Windows DPAPI.
+        
+        Args:
+            encrypted_data: DPAPI-encrypted bytes
+        
+        Returns:
+            Decrypted bytes
+        
+        Raises:
+            DecryptionFailed: If DPAPI decryption fails
+        """
+        crypt32 = ctypes.windll.crypt32
+        kernel32 = ctypes.windll.kernel32
+        
+        input_blob = DATA_BLOB()
+        input_blob.cbData = len(encrypted_data)
+        input_blob.pbData = ctypes.cast(
+            ctypes.create_string_buffer(encrypted_data, len(encrypted_data)),
+            ctypes.POINTER(ctypes.c_char)
+        )
+        
+        output_blob = DATA_BLOB()
+        
+        result = crypt32.CryptUnprotectData(
+            ctypes.byref(input_blob),
+            None, None, None, None, 0,
+            ctypes.byref(output_blob)
+        )
+        
+        if not result:
+            raise DecryptionFailed(f"DPAPI decryption failed: {ctypes.GetLastError()}")
+        
+        decrypted = ctypes.string_at(output_blob.pbData, output_blob.cbData)
+        kernel32.LocalFree(output_blob.pbData)
+        
+        return decrypted
+
+
+# =============================================================================
+# Linux Keyring Functions (Linux only)
+# =============================================================================
+
+if IS_LINUX:
+    def _linux_get_keyring_password(browser: str = "chrome") -> Optional[bytes]:
+        """Get encryption password from Linux keyring (GNOME Keyring/libsecret).
+        
+        Args:
+            browser: Browser name (chrome, chromium, brave, etc.)
+        
+        Returns:
+            Password bytes or None if not found
+        """
+        try:
+            import secretstorage
+            
+            # Browser-specific identifiers
+            browser_schemas = {
+                "chrome": "chrome_libsecret_os_crypt_password_v2",
+                "chromium": "chromium_libsecret_os_crypt_password_v2", 
+                "brave": "brave_libsecret_os_crypt_password_v2",
+                "edge": "edge_libsecret_os_crypt_password_v2",
+                "opera": "opera_libsecret_os_crypt_password_v2",
+                "vivaldi": "vivaldi_libsecret_os_crypt_password_v2",
+            }
+            
+            schema_name = browser_schemas.get(browser.lower(), "chrome_libsecret_os_crypt_password_v2")
+            
+            bus = secretstorage.dbus_init()
+            collection = secretstorage.get_default_collection(bus)
+            
+            for item in collection.get_all_items():
+                if item.get_label() == schema_name:
+                    return item.get_secret()
+            
+            # Fallback: try generic Chrome Safe Storage
+            for item in collection.get_all_items():
+                label = item.get_label().lower()
+                if browser.lower() in label and ("safe" in label or "password" in label):
+                    return item.get_secret()
+                    
+        except ImportError:
+            pass  # secretstorage not installed
+        except Exception:
+            pass  # D-Bus or keyring error
+        
+        return None
+
+    def _linux_derive_key(password: bytes) -> bytes:
+        """Derive AES key from password using PBKDF2 (Linux method).
+        
+        Args:
+            password: Password from keyring
+        
+        Returns:
+            32-byte AES key
+        """
+        from hashlib import pbkdf2_hmac
+        
+        # Linux Chromium uses these fixed parameters
+        salt = b"saltysalt"
+        iterations = 1
+        key_length = 16  # AES-128 on Linux
+        
+        return pbkdf2_hmac("sha1", password, salt, iterations, key_length)
+
+
+    # Default password if keyring is not available
+    LINUX_DEFAULT_PASSWORD = b"peanuts"
+
+
+    def _linux_aes_cbc_decrypt(encrypted_data: bytes, key: bytes) -> bytes:
+        """Decrypt AES-128-CBC encrypted data (Linux format).
+        
+        Linux Chromium uses AES-128-CBC with PKCS7 padding.
+        Format: IV (16 bytes) + ciphertext
+        
+        Args:
+            encrypted_data: IV + ciphertext
+            key: 16-byte AES key
+        
+        Returns:
+            Decrypted bytes with padding removed
+        """
+        try:
+            from Crypto.Cipher import AES
+            from Crypto.Util.Padding import unpad
+        except ImportError:
+            raise DependencyMissing(
+                "pycryptodome is required for AES decryption. "
+                "Install with: pip install pycryptodome"
+            )
+        
+        iv = encrypted_data[:16]
+        ciphertext = encrypted_data[16:]
+        
+        cipher = AES.new(key, AES.MODE_CBC, iv=iv)
+        decrypted = cipher.decrypt(ciphertext)
+        
+        # Remove PKCS7 padding
+        return unpad(decrypted, AES.block_size)
 
 
 # =============================================================================
@@ -152,19 +259,26 @@ def _win_dpapi_decrypt(encrypted_data: bytes) -> bytes:
 # =============================================================================
 
 def is_admin() -> bool:
-    """Check if running with administrator privileges."""
-    try:
-        return ctypes.windll.shell32.IsUserAnAdmin() != 0
-    except:
-        return False
+    """Check if running with administrator/root privileges."""
+    if IS_WINDOWS:
+        try:
+            return ctypes.windll.shell32.IsUserAnAdmin() != 0
+        except:
+            return False
+    else:
+        # Linux: check for root
+        return os.geteuid() == 0
 
 
 def request_admin_elevation() -> bool:
-    """Request UAC elevation by relaunching script as admin.
+    """Request UAC elevation by relaunching script as admin (Windows only).
     
     Returns:
-        True if elevation was requested (script will exit), False if already admin
+        True if elevation was requested (script will exit), False if already admin or not Windows
     """
+    if not IS_WINDOWS:
+        return False
+        
     if is_admin():
         return False
     
@@ -181,7 +295,7 @@ def request_admin_elevation() -> bool:
 
 
 # =============================================================================
-# v20 Admin Decryption (LSASS Impersonation)
+# v20 Admin Decryption (LSASS Impersonation) - Windows Only
 # =============================================================================
 
 # Cached v20 key per browser
@@ -189,7 +303,9 @@ _v20_key_cache: Dict[str, bytes] = {}
 
 
 def _check_v20_dependencies() -> bool:
-    """Check if v20 admin decryption dependencies are available."""
+    """Check if v20 admin decryption dependencies are available (Windows only)."""
+    if not IS_WINDOWS:
+        return False
     try:
         import windows
         import windows.crypto
@@ -199,35 +315,49 @@ def _check_v20_dependencies() -> bool:
         return False
 
 
-@contextmanager
-def _impersonate_lsass():
-    """Impersonate lsass.exe to get SYSTEM privilege for DPAPI."""
-    import windows
-    import windows.generated_def as gdef
-    
-    original_token = windows.current_thread.token
-    try:
-        windows.current_process.token.enable_privilege("SeDebugPrivilege")
-        proc = next(p for p in windows.system.processes if p.name == "lsass.exe")
-        lsass_token = proc.token
-        impersonation_token = lsass_token.duplicate(
-            type=gdef.TokenImpersonation,
-            impersonation_level=gdef.SecurityImpersonation
-        )
-        windows.current_thread.token = impersonation_token
-        yield
-    finally:
-        windows.current_thread.token = original_token
-
+if IS_WINDOWS:
+    @contextmanager
+    def _impersonate_lsass():
+        """Impersonate lsass.exe to get SYSTEM privilege for DPAPI."""
+        import windows
+        import windows.generated_def as gdef
+        
+        original_token = windows.current_thread.token
+        try:
+            windows.current_process.token.enable_privilege("SeDebugPrivilege")
+            proc = next(p for p in windows.system.processes if p.name == "lsass.exe")
+            lsass_token = proc.token
+            impersonation_token = lsass_token.duplicate(
+                type=gdef.TokenImpersonation,
+                impersonation_level=gdef.SecurityImpersonation
+            )
+            windows.current_thread.token = impersonation_token
+            yield
+        finally:
+            windows.current_thread.token = original_token
 
 def _parse_key_blob(blob_data: bytes) -> dict:
-    """Parse the decrypted v20 key blob structure."""
+    """Parse the decrypted v20 key blob structure.
+    
+    Handles multiple v20 formats:
+    - Flag 1/2: AES-GCM or ChaCha20 with hardcoded keys (Chrome)
+    - Flag 3: NCrypt + XOR + AES-GCM (Chrome)
+    - 32-byte content: Raw key directly (Edge, Brave)
+    """
     buffer = io.BytesIO(blob_data)
     parsed_data = {}
 
     header_len = struct.unpack('<I', buffer.read(4))[0]
     parsed_data['header'] = buffer.read(header_len)
     content_len = struct.unpack('<I', buffer.read(4))[0]
+    
+    # Check if this is a raw 32-byte key (Edge, Brave format)
+    if content_len == 32:
+        # The entire content is the raw key - no flag parsing needed
+        raw_key = buffer.read(32)
+        parsed_data['flag'] = 0  # Special flag for raw key
+        parsed_data['raw_key'] = raw_key
+        return parsed_data
     
     parsed_data['flag'] = buffer.read(1)[0]
     
@@ -294,7 +424,14 @@ def _decrypt_with_cng(input_data: bytes, key_name: str = "Google Chromekey1") ->
 
 
 def _derive_v20_master_key(parsed_data: dict, browser_name: str = "chrome") -> bytes:
-    """Derive the v20 master key based on flag type."""
+    """Derive the v20 master key based on flag type.
+    
+    Handles multiple v20 formats:
+    - Flag 0: Raw key directly (Edge, Brave)
+    - Flag 1: AES-GCM with hardcoded key (Chrome)
+    - Flag 2: ChaCha20-Poly1305 with hardcoded key (Chrome)
+    - Flag 3: NCrypt + XOR + AES-GCM (Chrome)
+    """
     from Crypto.Cipher import AES, ChaCha20_Poly1305
     
     # Browser-specific CNG key names
@@ -303,6 +440,10 @@ def _derive_v20_master_key(parsed_data: dict, browser_name: str = "chrome") -> b
         "edge": "Microsoft Edgekey1",
         "brave": "Brave Softwarekey1",
     }
+    
+    if parsed_data['flag'] == 0:
+        # Raw key format (Edge, Brave) - key is already decrypted
+        return parsed_data['raw_key']
     
     if parsed_data['flag'] == 1:
         # AES-GCM with hardcoded key
@@ -513,16 +654,46 @@ def get_app_bound_key_windows(user_data_dir: Path, browser_name: str = "chrome")
     return None
 
 
-def get_encryption_key(user_data_dir: Path) -> bytes:
-    """Get the v10 encryption key (Windows).
+if IS_LINUX:
+    def get_encryption_key_linux(user_data_dir: Path, browser_name: str = "chrome") -> bytes:
+        """Extract the AES key on Linux.
+        
+        Linux Chromium stores the key either in GNOME Keyring/libsecret
+        or uses a hardcoded password "peanuts".
+        
+        Args:
+            user_data_dir: Path to browser's User Data directory
+            browser_name: Browser name for keyring lookup
+        
+        Returns:
+            16-byte AES key (Linux uses AES-128)
+        """
+        # Try to get password from keyring first
+        password = _linux_get_keyring_password(browser_name)
+        
+        if password is None:
+            # Fallback to hardcoded password
+            password = LINUX_DEFAULT_PASSWORD
+        
+        return _linux_derive_key(password)
+
+
+def get_encryption_key(user_data_dir: Path, browser_name: str = "chrome") -> bytes:
+    """Get the encryption key (cross-platform).
     
     Args:
         user_data_dir: Path to browser's User Data directory
+        browser_name: Browser name (for Linux keyring lookup)
     
     Returns:
         AES decryption key
     """
-    return get_encryption_key_windows(user_data_dir)
+    if IS_WINDOWS:
+        return get_encryption_key_windows(user_data_dir)
+    elif IS_LINUX:
+        return get_encryption_key_linux(user_data_dir, browser_name)
+    else:
+        raise DependencyMissing(f"Unsupported platform: {sys.platform}")
 
 
 # =============================================================================
@@ -624,18 +795,64 @@ def decrypt_password_windows(encrypted_password: bytes, key: bytes, app_bound_ke
         raise DecryptionFailed(f"DPAPI decryption failed: {e}")
 
 
+if IS_LINUX:
+    def decrypt_password_linux(encrypted_password: bytes, key: bytes) -> str:
+        """Decrypt a Chromium password on Linux.
+        
+        Handles v11 (AES-128-CBC) and v10 (AES-GCM) formats.
+        
+        Args:
+            encrypted_password: Encrypted password bytes
+            key: AES decryption key (16 bytes for Linux)
+        
+        Returns:
+            Decrypted password string
+        
+        Raises:
+            DecryptionFailed: If decryption fails
+        """
+        if not encrypted_password:
+            return ""
+        
+        # v11 format: Linux AES-128-CBC (most common on Linux)
+        if encrypted_password[:3] == b"v11":
+            try:
+                return _linux_aes_cbc_decrypt(encrypted_password[3:], key).decode("utf-8")
+            except Exception as e:
+                raise DecryptionFailed(f"v11 AES-CBC decryption failed: {e}")
+        
+        # v10 format: AES-GCM (less common on Linux but possible)
+        if encrypted_password[:3] == b"v10":
+            try:
+                return _aes_gcm_decrypt(encrypted_password[3:], key).decode("utf-8")
+            except Exception as e:
+                raise DecryptionFailed(f"AES-GCM decryption failed: {e}")
+        
+        # No prefix - might be plaintext or unknown format
+        try:
+            # Try as plaintext
+            return encrypted_password.decode("utf-8")
+        except:
+            raise DecryptionFailed("Unknown encryption format")
+
+
 def decrypt_password(encrypted_password: bytes, key: bytes, app_bound_key: bytes = None) -> str:
-    """Decrypt a password (Windows only).
+    """Decrypt a password (cross-platform).
     
     Args:
         encrypted_password: Encrypted password bytes from database
         key: Decryption key
-        app_bound_key: App-Bound Encryption key for v20
+        app_bound_key: App-Bound Encryption key for v20 (Windows only)
     
     Returns:
         Decrypted password string
     """
-    return decrypt_password_windows(encrypted_password, key, app_bound_key)
+    if IS_WINDOWS:
+        return decrypt_password_windows(encrypted_password, key, app_bound_key)
+    elif IS_LINUX:
+        return decrypt_password_linux(encrypted_password, key)
+    else:
+        raise DependencyMissing(f"Unsupported platform: {sys.platform}")
 
 
 # =============================================================================
@@ -687,18 +904,63 @@ def decrypt_cookie_windows(encrypted_value: bytes, key: bytes, app_bound_key: by
         raise DecryptionFailed(f"DPAPI cookie decryption failed: {e}")
 
 
+if IS_LINUX:
+    def decrypt_cookie_linux(encrypted_value: bytes, key: bytes) -> str:
+        """Decrypt a Chromium cookie value on Linux.
+        
+        Handles v11 (AES-128-CBC) and v10 (AES-GCM) formats.
+        
+        Args:
+            encrypted_value: Encrypted cookie value bytes
+            key: AES decryption key (16 bytes for Linux)
+        
+        Returns:
+            Decrypted cookie value string
+        
+        Raises:
+            DecryptionFailed: If decryption fails
+        """
+        if not encrypted_value:
+            return ""
+        
+        # v11 format: Linux AES-128-CBC
+        if encrypted_value[:3] == b"v11":
+            try:
+                return _linux_aes_cbc_decrypt(encrypted_value[3:], key).decode("utf-8")
+            except Exception as e:
+                raise DecryptionFailed(f"v11 cookie decryption failed: {e}")
+        
+        # v10 format: AES-GCM (less common on Linux)
+        if encrypted_value[:3] == b"v10":
+            try:
+                return _aes_gcm_decrypt(encrypted_value[3:], key).decode("utf-8")
+            except Exception as e:
+                raise DecryptionFailed(f"AES-GCM cookie decryption failed: {e}")
+        
+        # No prefix - might be plaintext
+        try:
+            return encrypted_value.decode("utf-8")
+        except:
+            raise DecryptionFailed("Unknown cookie encryption format")
+
+
 def decrypt_cookie(encrypted_value: bytes, key: bytes, app_bound_key: bytes = None) -> str:
-    """Decrypt a cookie value (Windows only).
+    """Decrypt a cookie value (cross-platform).
     
     Args:
         encrypted_value: Encrypted cookie value bytes from database
-        key: Decryption key (v10)
-        app_bound_key: App-Bound Encryption key for v20
+        key: Decryption key
+        app_bound_key: App-Bound Encryption key for v20 (Windows only)
     
     Returns:
         Decrypted cookie value string
     """
-    return decrypt_cookie_windows(encrypted_value, key, app_bound_key)
+    if IS_WINDOWS:
+        return decrypt_cookie_windows(encrypted_value, key, app_bound_key)
+    elif IS_LINUX:
+        return decrypt_cookie_linux(encrypted_value, key)
+    else:
+        raise DependencyMissing(f"Unsupported platform: {sys.platform}")
 
 
 def decrypt_chromium_cookies(
@@ -737,13 +999,15 @@ def decrypt_chromium_cookies(
     
     # Get decryption key
     try:
-        key = get_encryption_key(user_data_dir)
+        key = get_encryption_key(user_data_dir, browser_name)
     except (EncryptionKeyNotFound, DependencyMissing) as e:
         errors.append(str(e))
         return cookies, errors
     
-    # Get v20 key (if admin and dependencies available)
-    app_bound_key = get_app_bound_key_windows(user_data_dir, browser_name)
+    # Get v20 key (Windows only, if admin and dependencies available)
+    app_bound_key = None
+    if IS_WINDOWS:
+        app_bound_key = get_app_bound_key_windows(user_data_dir, browser_name)
     
     # Copy database to temp location
     temp_dir = Path(tempfile.mkdtemp(prefix="chromium_cookies_"))
@@ -759,6 +1023,8 @@ def decrypt_chromium_cookies(
                 shutil.copy2(wal_path, temp_dir / f"Cookies{suffix}")
         
         conn = sqlite3.connect(f"file:{temp_db}?mode=ro", uri=True)
+        # Use bytes text_factory to handle binary encrypted_value column properly
+        conn.text_factory = bytes
         cursor = conn.cursor()
         
         cursor.execute("""
@@ -770,10 +1036,11 @@ def decrypt_chromium_cookies(
         v20_count = 0
         
         for row in cursor.fetchall():
-            host_key = row[0] or ""
-            name = row[1] or ""
-            encrypted_value = row[2]
-            path = row[3] or "/"
+            # Decode text fields from bytes if needed
+            host_key = row[0].decode('utf-8', errors='replace') if isinstance(row[0], bytes) else (row[0] or "")
+            name = row[1].decode('utf-8', errors='replace') if isinstance(row[1], bytes) else (row[1] or "")
+            encrypted_value = row[2]  # Keep as bytes
+            path = row[3].decode('utf-8', errors='replace') if isinstance(row[3], bytes) else (row[3] or "/")
             creation_utc = row[4]
             expires_utc = row[5]
             is_secure = bool(row[6])
@@ -870,13 +1137,15 @@ def decrypt_chromium_passwords(
     
     # Get decryption key
     try:
-        key = get_encryption_key(user_data_dir)
+        key = get_encryption_key(user_data_dir, browser_name)
     except (EncryptionKeyNotFound, DependencyMissing) as e:
         errors.append(str(e))
         return credentials, errors
     
-    # Get App-Bound Encryption key for v20 passwords (if admin)
-    app_bound_key = get_app_bound_key_windows(user_data_dir, browser_name)
+    # Get App-Bound Encryption key for v20 passwords (Windows only, if admin)
+    app_bound_key = None
+    if IS_WINDOWS:
+        app_bound_key = get_app_bound_key_windows(user_data_dir, browser_name)
     
     # Copy database to temp location (it may be locked)
     temp_dir = Path(tempfile.mkdtemp(prefix="chromium_passwords_"))
