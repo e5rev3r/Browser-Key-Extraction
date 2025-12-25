@@ -1,27 +1,7 @@
-"""Firefox Password Decryption Module.
+"""Firefox Password Decryption using NSS library.
 
-Uses Mozilla's NSS (Network Security Services) library to decrypt
-saved passwords from Firefox profiles.
-
-This module handles:
-- logins.json (encrypted credentials)
-- key4.db (master key database, SQLite + NSS format)
-- Both master password protected and unprotected profiles
-
-Supported platforms:
-- Windows (uses Firefox's bundled nss3.dll)
-- Linux native Firefox (uses system libnss3.so)
-
-Unsupported cases (detected and refused):
-- Snap/Flatpak Firefox installations (sandboxed, different NSS)
-- OS keyring–locked profiles (GNOME Keyring / KWallet integration)
-- Missing NSS library
-
-Requirements:
-- Windows: Firefox must be installed (uses bundled NSS DLLs)
-- Linux: libnss3 system library (usually pre-installed)
-- Native Firefox installation (not Snap/Flatpak on Linux)
-- No pip packages needed
+Windows: Firefox bundled nss3.dll | Linux: system libnss3.so
+Unsupported: Snap/Flatpak Firefox, OS keyring integration
 """
 
 import ctypes
@@ -48,7 +28,6 @@ if sys.platform == 'win32':
 
 # NSS Library structures and constants
 class SECItem(Structure):
-    """NSS SECItem structure for binary data."""
     _fields_ = [
         ('type', c_uint),
         ('data', POINTER(c_ubyte)),
@@ -56,52 +35,15 @@ class SECItem(Structure):
     ]
 
 
-class NSSError(Exception):
-    """NSS operation failed."""
-    pass
+class NSSError(Exception): pass
+class MasterPasswordRequired(Exception): pass
+class ProfileNotFound(Exception): pass
+class UnsupportedEnvironment(Exception): pass
+class NSSLibraryMissing(Exception): pass
+class OSKeyringLocked(Exception): pass
 
-
-class MasterPasswordRequired(Exception):
-    """Master password is required but not provided."""
-    pass
-
-
-class ProfileNotFound(Exception):
-    """Firefox profile not found."""
-    pass
-
-
-class UnsupportedEnvironment(Exception):
-    """Firefox environment is not supported for decryption."""
-    pass
-
-
-class NSSLibraryMissing(Exception):
-    """NSS library (libnss3) is not installed."""
-    pass
-
-
-class OSKeyringLocked(Exception):
-    """Profile uses OS keyring which is locked or unavailable."""
-    pass
-
-
-# =============================================================================
-# Environment Detection Functions
-# =============================================================================
-
-# =============================================================================
-# Windows-Specific Functions
-# =============================================================================
 
 def find_firefox_windows() -> Optional[Path]:
-    """Find Firefox installation directory on Windows.
-    
-    Checks registry first, then common installation paths.
-    
-    Returns:
-        Path to Firefox installation directory, or None if not found
-    """
     if sys.platform != 'win32':
         return None
     
@@ -143,11 +85,6 @@ def find_firefox_windows() -> Optional[Path]:
 
 
 def get_windows_firefox_profile_dir() -> Optional[Path]:
-    """Get the Firefox profiles directory on Windows.
-    
-    Returns:
-        Path to Firefox profiles directory, or None if not found
-    """
     if sys.platform != 'win32':
         return None
     
@@ -161,13 +98,7 @@ def get_windows_firefox_profile_dir() -> Optional[Path]:
 
 
 def detect_firefox_installation_type() -> Tuple[str, Optional[str]]:
-    """Detect how Firefox is installed on the system.
-    
-    Returns:
-        Tuple of (installation_type, details)
-        installation_type: 'native', 'snap', 'flatpak', 'unknown', 'windows'
-        details: Additional information or path
-    """
+    """Returns (type, details) where type is 'native', 'snap', 'flatpak', 'windows', 'unknown'"""
     # Windows detection
     if sys.platform == 'win32':
         firefox_path = find_firefox_windows()
@@ -240,26 +171,17 @@ def detect_firefox_installation_type() -> Tuple[str, Optional[str]]:
 
 
 def is_snap_profile(profile_path: Path) -> bool:
-    """Check if a profile path belongs to Snap Firefox."""
     profile_str = str(profile_path).lower()
     return '/snap/' in profile_str or 'snap/firefox' in profile_str
 
 
 def is_flatpak_profile(profile_path: Path) -> bool:
-    """Check if a profile path belongs to Flatpak Firefox."""
     profile_str = str(profile_path).lower()
     return '.var/app/org.mozilla.firefox' in profile_str or 'flatpak' in profile_str
 
 
 def check_nss_library_available() -> Tuple[bool, Optional[str], Optional[str]]:
-    """Check if NSS library is available on the system.
-    
-    On Windows, checks for nss3.dll in Firefox installation.
-    On Linux, checks for libnss3.so in system paths.
-    
-    Returns:
-        Tuple of (available, library_path, error_message)
-    """
+    """Returns (available, library_path, error_message)."""
     # Windows: Look for nss3.dll in Firefox installation
     if sys.platform == 'win32':
         firefox_path = find_firefox_windows()
@@ -307,14 +229,7 @@ def check_nss_library_available() -> Tuple[bool, Optional[str], Optional[str]]:
 
 
 def check_os_keyring_integration(profile_path: Path) -> Tuple[bool, Optional[str]]:
-    """Check if the profile uses OS keyring integration.
-    
-    Firefox can be configured to use GNOME Keyring or KWallet
-    instead of its own key4.db for storing the master key.
-    
-    Returns:
-        Tuple of (uses_keyring, keyring_type)
-    """
+    """Returns (uses_keyring, keyring_type)."""
     # Check for GNOME Keyring integration indicator files
     prefs_path = profile_path / 'prefs.js'
     user_prefs_path = profile_path / 'user.js'
@@ -428,7 +343,6 @@ def get_installation_help(install_type: str) -> str:
 
 
 def get_nss_install_help() -> str:
-    """Get help text for installing libnss3."""
     return """
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║  MISSING: libnss3 Library Not Found                                          ║
@@ -453,7 +367,6 @@ def get_nss_install_help() -> str:
 
 
 def get_keyring_help(keyring_type: str) -> str:
-    """Get help text for OS keyring locked profiles."""
     return f"""
 ╔══════════════════════════════════════════════════════════════════════════════╗
 ║  UNSUPPORTED: OS Keyring Integration Detected ({keyring_type:^18})       ║
@@ -478,19 +391,7 @@ def get_keyring_help(keyring_type: str) -> str:
 
 
 def validate_environment(profile_path: Path) -> Tuple[bool, Optional[str]]:
-    """Validate that the environment supports password decryption.
-    
-    Args:
-        profile_path: Path to Firefox profile
-    
-    Returns:
-        Tuple of (is_valid, error_message_with_help)
-    
-    Raises:
-        UnsupportedEnvironment: If environment is not supported
-        NSSLibraryMissing: If NSS library is not available
-        OSKeyringLocked: If profile uses OS keyring
-    """
+    """Raises UnsupportedEnvironment, NSSLibraryMissing, or OSKeyringLocked if invalid."""
     errors = []
     
     # 1. Check for NSS library (nss3.dll on Windows, libnss3.so on Linux)
@@ -534,11 +435,6 @@ def validate_environment(profile_path: Path) -> Tuple[bool, Optional[str]]:
 
 
 def print_environment_status(profile_path: Optional[Path] = None) -> dict:
-    """Print and return environment status for diagnostics.
-    
-    Returns:
-        Dictionary with environment status
-    """
     status = {
         'nss_available': False,
         'nss_path': None,
@@ -601,7 +497,6 @@ def print_environment_status(profile_path: Optional[Path] = None) -> dict:
 
 @dataclass
 class DecryptedLogin:
-    """Represents a decrypted login entry."""
     url: str
     username: str
     password: str
@@ -615,9 +510,6 @@ class DecryptedLogin:
 
 
 class NSSDecryptor:
-    """Handles Firefox password decryption using NSS library."""
-    
-    # Linux NSS library paths to try
     NSS_LIBRARY_PATHS_LINUX = [
         '/usr/lib/libnss3.so',
         '/usr/lib64/libnss3.so',
@@ -635,12 +527,7 @@ class NSSDecryptor:
         self._firefox_path: Optional[Path] = None  # Windows: Firefox installation path
         
     def _load_nss_library(self) -> ctypes.CDLL:
-        """Load the NSS library.
-        
-        On Windows, loads mozglue.dll first (required dependency),
-        then loads nss3.dll from Firefox installation directory.
-        On Linux, loads libnss3.so from system paths.
-        """
+        """Windows: mozglue.dll + nss3.dll from Firefox. Linux: system libnss3.so"""
         # Windows: Load from Firefox installation
         if sys.platform == 'win32':
             self._firefox_path = find_firefox_windows()
@@ -688,7 +575,6 @@ class NSSDecryptor:
         )
     
     def _setup_nss_functions(self):
-        """Setup NSS function signatures."""
         # NSS_Init
         self._nss.NSS_Init.argtypes = [c_char_p]
         self._nss.NSS_Init.restype = c_int
@@ -726,10 +612,6 @@ class NSSDecryptor:
         self._nss.PK11_NeedLogin.restype = c_int
     
     def _create_temp_profile(self, profile_path: Path) -> Path:
-        """Create a temporary copy of the profile for NSS.
-        
-        NSS modifies the database files, so we work on a copy.
-        """
         self._temp_dir = Path(tempfile.mkdtemp(prefix='firefox_decrypt_'))
         
         # Copy only the necessary files
@@ -743,29 +625,11 @@ class NSSDecryptor:
         return self._temp_dir
     
     def _cleanup_temp(self):
-        """Clean up temporary directory."""
         if self._temp_dir and self._temp_dir.exists():
             shutil.rmtree(self._temp_dir, ignore_errors=True)
             self._temp_dir = None
     
     def initialize(self, profile_path: Path, master_password: str = "") -> bool:
-        """Initialize NSS with the Firefox profile.
-        
-        Args:
-            profile_path: Path to Firefox profile directory
-            master_password: Master password if set (empty string if none)
-        
-        Returns:
-            True if initialization successful
-        
-        Raises:
-            ProfileNotFound: If profile doesn't exist
-            MasterPasswordRequired: If master password needed but not provided
-            NSSError: If NSS initialization fails
-            UnsupportedEnvironment: If Snap/Flatpak Firefox detected
-            NSSLibraryMissing: If libnss3 not available
-            OSKeyringLocked: If profile uses OS keyring
-        """
         profile_path = Path(profile_path)
         
         if not profile_path.exists():
@@ -838,14 +702,6 @@ class NSSDecryptor:
         return True
     
     def decrypt(self, encrypted_data: bytes) -> str:
-        """Decrypt a piece of encrypted data.
-        
-        Args:
-            encrypted_data: Base64-decoded encrypted data
-        
-        Returns:
-            Decrypted string
-        """
         if not self._initialized:
             raise NSSError("NSS not initialized. Call initialize() first.")
         
@@ -880,11 +736,6 @@ class NSSDecryptor:
                 self._nss.SECITEM_FreeItem(byref(output_item), 0)
     
     def decrypt_logins(self) -> List[DecryptedLogin]:
-        """Decrypt all logins from the profile.
-        
-        Returns:
-            List of decrypted login entries
-        """
         if not self._initialized or not self._profile_path:
             raise NSSError("NSS not initialized. Call initialize() first.")
         
@@ -929,7 +780,6 @@ class NSSDecryptor:
         return decrypted_logins
     
     def shutdown(self):
-        """Shutdown NSS and cleanup."""
         if self._initialized and self._nss:
             self._nss.NSS_Shutdown()
             self._initialized = False
@@ -947,15 +797,7 @@ def decrypt_firefox_passwords(
     profile_path: Path,
     master_password: str = ""
 ) -> Tuple[List[DecryptedLogin], Optional[str]]:
-    """High-level function to decrypt Firefox passwords.
-    
-    Args:
-        profile_path: Path to Firefox profile
-        master_password: Master password if set
-    
-    Returns:
-        Tuple of (list of decrypted logins, error message or None)
-    """
+    """Decrypt Firefox passwords. Returns (logins, error_or_none)."""
     try:
         with NSSDecryptor() as decryptor:
             decryptor.initialize(profile_path, master_password)
@@ -978,14 +820,7 @@ def decrypt_firefox_passwords(
 
 
 def check_master_password_required(profile_path: Path) -> bool:
-    """Check if a profile requires a master password.
-    
-    Args:
-        profile_path: Path to Firefox profile
-    
-    Returns:
-        True if master password is required
-    """
+    """Check if profile requires master password (heuristic check)."""
     key4_path = profile_path / 'key4.db'
     
     if not key4_path.exists():
@@ -1013,15 +848,7 @@ def check_master_password_required(profile_path: Path) -> bool:
 
 
 def run_environment_check(profile_path: Optional[Path] = None, verbose: bool = True) -> bool:
-    """Run environment checks and print results.
-    
-    Args:
-        profile_path: Optional profile path to check
-        verbose: Whether to print detailed output
-    
-    Returns:
-        True if environment is supported
-    """
+    """Run environment checks. Returns True if supported."""
     if verbose:
         print("\n" + "=" * 70)
         print("  FIREFOX PASSWORD DECRYPTION - ENVIRONMENT CHECK")
