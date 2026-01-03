@@ -619,12 +619,12 @@ def print_passwords_firefox(passwords: List):
     for i, pwd in enumerate(passwords, 1):
         print(f"\n{colorize(f'[{i}]', Colors.YELLOW)} {colorize(pwd.hostname, Colors.MAGENTA)}")
         print(f"    {colorize('Username:', Colors.CYAN)} {colorize(pwd.username, Colors.GREEN + Colors.BOLD)}")
-        print(f"    {colorize('Password:', Colors.CYAN)} {colorize(pwd.password, Colors.RED + Colors.BOLD)}")
+        print(f"    {colorize('Password:', Colors.CYAN)} {colorize(pwd.password, Colors.GREEN + Colors.BOLD)} {colorize('[O]', Colors.GREEN)}")
         if pwd.times_used:
             print(f"    {colorize('Times Used:', Colors.CYAN)} {pwd.times_used}")
 
     print(f"\n{colorize('═' * 70, Colors.RED)}")
-    print(f"{colorize(f'Total: {len(passwords)} password(s) decrypted', Colors.BOLD + Colors.RED)}")
+    print(f"{colorize(f'Total: {len(passwords)} password(s) decrypted successfully', Colors.BOLD + Colors.GREEN)}")
 
 
 def print_passwords_chromium(credentials: List):
@@ -637,16 +637,42 @@ def print_passwords_chromium(credentials: List):
     print(f"{colorize('[!] DECRYPTED PASSWORDS', Colors.BOLD + Colors.RED)}")
     print(f"{colorize('=' * 70, Colors.RED)}")
 
+    successful = 0
+    failed = 0
+
     for i, cred in enumerate(credentials, 1):
         print(f"\n{colorize(f'[{i}]', Colors.YELLOW)} {colorize(cred.signon_realm, Colors.MAGENTA)}")
         print(f"    {colorize('URL:', Colors.CYAN)} {cred.url}")
         print(f"    {colorize('Username:', Colors.CYAN)} {colorize(cred.username, Colors.GREEN + Colors.BOLD)}")
-        print(f"    {colorize('Password:', Colors.CYAN)} {colorize(cred.password, Colors.RED + Colors.BOLD)}")
+        
+        # Color password based on success/failure
+        if "[DECRYPTION FAILED]" in cred.password or "[v20" in cred.password:
+            password_display = colorize(cred.password, Colors.RED + Colors.BOLD)
+            status = colorize("[X]", Colors.RED)
+            failed += 1
+        else:
+            password_display = colorize(cred.password, Colors.GREEN + Colors.BOLD)
+            status = colorize("[O]", Colors.GREEN)
+            successful += 1
+        
+        print(f"    {colorize('Password:', Colors.CYAN)} {password_display} {status}")
         if cred.times_used:
             print(f"    {colorize('Times Used:', Colors.CYAN)} {cred.times_used}")
 
     print(f"\n{colorize('═' * 70, Colors.RED)}")
-    print(f"{colorize(f'Total: {len(credentials)} password(s) decrypted', Colors.BOLD + Colors.RED)}")
+    
+    # Show summary with success/failure breakdown
+    if successful > 0 and failed > 0:
+        summary = f"Total: {successful} successful, {failed} failed"
+        summary_color = Colors.YELLOW
+    elif successful > 0:
+        summary = f"Total: {successful} password(s) decrypted successfully"
+        summary_color = Colors.GREEN
+    else:
+        summary = f"Total: {failed} password(s) - ALL DECRYPTION FAILED"
+        summary_color = Colors.RED
+    
+    print(f"{colorize(summary, Colors.BOLD + summary_color)}")
 
 
 # =============================================================================
