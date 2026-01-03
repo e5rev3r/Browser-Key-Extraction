@@ -1,0 +1,8 @@
+# Core dependencies
+pycryptodome>=3.19.0
+
+# Linux-specific (GNOME Keyring support for Chromium browsers)
+secretstorage>=3.3.0; sys_platform == 'linux'
+
+# Windows-specific (optional - v20 admin decryption)
+# PythonForWindows>=0.6.0; sys_platform == 'win32'
